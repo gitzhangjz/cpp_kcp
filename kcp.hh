@@ -60,7 +60,7 @@ typedef unsigned char U8;
 
 #ifndef __IUINT16_DEFINED
 #define __IUINT16_DEFINED
-typedef unsigned short U6;
+typedef unsigned short U16;
 #endif
 
 #ifndef __IINT16_DEFINED
@@ -139,12 +139,15 @@ constexpr U32 KCP_RTO_NDL = 30;		// no delay min rto
 constexpr U32 KCP_RTO_MIN = 100;		// normal min rto
 constexpr U32 KCP_RTO_DEF = 200;
 constexpr U32 KCP_RTO_MAX = 60000;
-constexpr U32 KCP_CMD_PUSH = 81;		// cmd: push data
-constexpr U32 KCP_CMD_ACK  = 82;		// cmd: ack
-constexpr U32 KCP_CMD_WASK = 83;		// cmd: window probe (ask)
-constexpr U32 KCP_CMD_WINS = 84;		// cmd: window size (tell)
-constexpr U32 KCP_ASK_SEND = 1;		// need to send IKCP_CMD_WASK
-constexpr U32 KCP_ASK_TELL = 2;		// 标记：需要发送自己窗口大小
+
+constexpr U32 KCP_CMD_PUSH = 81;		// cmd: 发送数据
+constexpr U32 KCP_CMD_ACK  = 82;		// cmd: 收到数据（ack）
+constexpr U32 KCP_CMD_WASK = 83;		// cmd: 探测窗口 (ask)
+constexpr U32 KCP_CMD_WINS = 84;		// cmd: 回答窗口 (tell)
+
+constexpr U32 KCP_ASK_SEND = 1;		// 标记: 探测窗口
+constexpr U32 KCP_ASK_TELL = 2;		// 标记：回答窗口
+
 constexpr U32 KCP_WND_SND = 32;
 constexpr U32 KCP_WND_RCV = 128;       // must >= max fragment size
 constexpr U32 KCP_MTU_DEF = 1400;		// mtu
@@ -168,22 +171,30 @@ public:
 	I32 frg;	// 上层传下来的数据一个KCP包装不完需要分段（段号是倒序的也就是段3、2、1、0组装出上层数据，段号一定以0结尾）。（如果是字节流模式就没有分段）
 	I32 wnd;	// 窗口大小
 
-	I32 ts;		// 时间戳，如果是数据包，每次重传会更新ts
-				// PUSH: 数据包的发出时间。 
-				// ACK：数据包的发出时间而不是ACK发出的时间，和收到的PUSH的ts一样，发送方收到ACK用这个ts方便计算rtt
+	// 时间戳，如果是数据包，每次重传会更新ts
+	// PUSH: 数据包的发出时间。 
+	// ACK：数据包的发出时间而不是ACK发出的时间，和收到的PUSH的ts一样， 发送方收到ACK用这个ts方便计算rtt
+	U32 ts;		
 	
-				/* 	sn
-					CMD_ACK:发送方告诉接收方: 我在ack你的第几个包
-					ACM_PUSH:发送方发送的第几个包
-				*/
-	I32 sn;		
-	I32 una;		// 未确认序列号, 发送方告诉接收方：你发送的una之前的包都已经收到了
+	// 	sn
+	//	CMD_ACK:发送方告诉接收方: 我在ack你的第几个包
+	//	ACM_PUSH:发送方发送的第几个包	
+	U32 sn;			
+	// 未确认序列号, 发送方告诉接收方：
+	//	你发送的una之前的包都已经收到了, 期待una号包
+	I32 una;		
 	I32 len;  		// 数据包除去头部的字节数
+
+	/*---------------以上为overhead，以下为辅助信息--------------*/
+
 	I32 capacity; 	// 数据总容量
-	I32 resendts; 	// 超时重传的阈值, 当前时间超过resendts, 就要重发这个数据包
-	I32 rto;
-	I32 fastack;
-	I32 xmit;  		// 该数据包发送次数, transmit 的缩写
+	I32 resendts; 	// = current + rto， 超时重传的阈值, 当前时间超过resendts, 就要重发这个数据包
+
+	// Retransmission Timeout, 下次超时重传的间隔时间
+	// 会随着超时次数增加, 增加速率取决于是不是快速模式
+	I32 rto;		
+	I32 fastack;	// 数据包被跳过次数, 快速重传功能需要
+	I32 xmit;  		// 该数据包发送次数, transmit 的缩写, , 次数太多判断网络断开
 
 	char *data, *offset_p;
 
@@ -213,20 +224,20 @@ public:
 
 	U32 ssthresh;	// 拥塞窗口从慢启动到拥塞避免的阈值
 	I32 rx_rttval;	// 近4次rtt和srtt的平均差值，反应了rtt偏离srtt的程度
-	I32 rx_srtt;		// 平滑的rtt,近8次rtt平均值
-	I32 rx_rto;		// 重传超时时间
+	I32 rx_srtt;	// 平滑的rtt,近8次rtt平均值
+	I32 rx_rto;		//系统的重传超时时间
 	I32 rx_minrto; 	// 最小重传超时时间
 	
 	U32 snd_wnd; 	// 发送窗口大小
 	U32 rcv_wnd; 	// 接收窗口大小
 	U32 rmt_wnd; 	// 对方接收窗口大小
 	U32 cwnd; 		// 拥塞窗口大小
-	U32 probe;		// 探测窗口大小
+	U32 probe;		// 探测窗口的相关标记 IKCP_ASK_SEND 和 IKCP_ASK_TELL
 
 	U32 current;	// 当前时间戳
 	U32 interval; 	// 内部flush刷新间隔
 	U32 ts_flush; 	// 下一次刷新输出的时间戳
-	U32 xmit;		// 该数据包发送次数, transmit 的缩写, 发送次数太多判断网络断开
+	U32 xmit;		// 该KCP连接超时重传次数
 
 	U32 nrcv_buf; 	// rcv_buf的长度
 	U32 nsnd_buf;	// snd_buf的长度
@@ -250,7 +261,8 @@ public:
 	char *buffer; // 发送数据的缓冲区
 	int fastresend; // 快速重传的失序阈值, 发送方收到 fastresend 个冗余ACK就触发快速重传
 	int fastlimit;  // 快速重传的次数限制
-	int nocwnd, stream;
+	int nocwnd;		// 0: 有拥塞控制, 1: 没有拥塞控制
+	int stream;		// 流模式
 	int logmask;
 	int (*output)(const char *buf, int len, const KCPCB& kcp, void *user);
 	void (*writelog)(const char *log, const KCPCB& kcp, void *user);
@@ -258,6 +270,8 @@ public:
 	KCPCB(U32 conv, void *user);
 
 	~KCPCB();
+
+	void ack_get(int i, U32& sn, U32& ts);
 
 	void set_output(int (*output)(const char *buf, int len, 
 	const KCPCB& kcp, void *user));
@@ -274,11 +288,15 @@ public:
 
 	void flush();
 
+	int kcp_output(const char *buf, int len);
+
 	int peeksize();
 
 	int setmtu(int mtu);
 
-	int wndsize(int sndwnd, int rcvwnd);
+	int rcvwnd_unused();
+	
+	int set_wndsize(int sndwnd, int rcvwnd);
 
 	int waitsnd();
 
@@ -290,4 +308,89 @@ public:
 	
 };
 
+// 将dw放在p位置返回p+4
+inline char *kcp_encode32u(char *p, U32 dw) {
+	#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+		*(unsigned char*)(p + 0) = (unsigned char)((dw >>  0) & 0xff);
+		*(unsigned char*)(p + 1) = (unsigned char)((dw >>  8) & 0xff);
+		*(unsigned char*)(p + 2) = (unsigned char)((dw >> 16) & 0xff);
+		*(unsigned char*)(p + 3) = (unsigned char)((dw >> 24) & 0xff);
+	#else
+		memcpy(p, &dw, 4);
+	#endif
+	p += 4;
+	return p;
+}
+
+// 将p位置的数据放在dw, 返回p + 4
+inline const char *kcp_decode32u(const char *p, U32 *dw)
+{
+#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+	*l = *(const unsigned char*)(p + 3);
+	*l = *(const unsigned char*)(p + 2) + (*dw << 8);
+	*l = *(const unsigned char*)(p + 1) + (*dw << 8);
+	*l = *(const unsigned char*)(p + 0) + (*dw << 8);
+#else 
+	memcpy(dw, p, 4);
+#endif
+	// p + 4字节
+	p += 4;
+	return p;
+}
+
+// 将w放在p位置返回p+2
+inline char *kcp_encode16u(char *p, U16 w) {
+	#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+		*(unsigned char*)(p + 0) = (w & 255);
+		*(unsigned char*)(p + 1) = (w >> 8);
+	#else
+		memcpy(p, &w, 2);
+	#endif
+	p += 2;
+	return p;
+}
+
+// 将p位置的数据放在w, 返回p + 2
+inline const char *kcp_decode16u(const char *p, U16 *w)
+{
+#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
+	*w = *(const unsigned char*)(p + 1);
+	*w = *(const unsigned char*)(p + 0) + (*w << 8);
+#else
+	memcpy(w, p, 2);
+#endif
+	p += 2;
+	return p;
+}
+
+// 将c放在p位置返回p+1
+inline char *kcp_encode8u(char *p, U8 c) {
+	*(unsigned char*)p++ = c;
+	return p;
+}
+
+// 将p位置的数据放在c, 返回p + 1
+inline const char *kcp_decode8u(const char *p, unsigned char *c)
+{
+	*c = *(unsigned char*)p++;
+	return p;
+}
+
+// 将数据包头部编码进ptr指向的buffer中，返回编码后ptr指向的位置
+inline char *kcp_encode_seg(char *ptr, const KCPSEG &seg) {
+	ptr = kcp_encode32u(ptr, seg.conv);
+	ptr = kcp_encode8u(ptr, (U8)seg.cmd);
+	ptr = kcp_encode8u(ptr, (U8)seg.frg);
+	ptr = kcp_encode16u(ptr, (U16)seg.wnd);
+	ptr = kcp_encode32u(ptr, seg.ts);
+	ptr = kcp_encode32u(ptr, seg.sn);
+	ptr = kcp_encode32u(ptr, seg.una);
+	ptr = kcp_encode32u(ptr, seg.len);
+	return ptr;
+}
+
+inline I32 u32diff(U32 later, U32 earlier) 
+{
+	return ((I32)(later - earlier));
+}
 #endif
