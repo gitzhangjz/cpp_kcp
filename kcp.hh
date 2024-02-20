@@ -4,7 +4,7 @@
 #include <list>
 #include <vector>
 
-using std::list, std::vector;
+using std::list, std::vector, std::min, std::max;
 
 //=====================================================================
 // 32BIT INTEGER DEFINITION 
@@ -239,10 +239,10 @@ public:
 	U32 ts_flush; 	// 下一次刷新输出的时间戳
 	U32 xmit;		// 该KCP连接超时重传次数
 
-	U32 nrcv_buf; 	// rcv_buf的长度
-	U32 nsnd_buf;	// snd_buf的长度
-	U32 nrcv_que; 	// rcv_que的长度
-	U32 nsnd_que; 	// snd_que的长度
+	// U32 nrcv_buf; 	// rcv_buf的长度
+	// U32 nsnd_buf;	// snd_buf的长度
+	// U32 nrcv_que; 	// rcv_que的长度
+	// U32 nsnd_que; 	// snd_que的长度
 
 	U32 nodelay_flag;	// 是否启用nodelay模式
 	U32 updated;	// 是否调用过update函数
@@ -284,7 +284,13 @@ public:
 
 	U32 check(U32 current);
 
-	int input(const char *data, int len);
+	void parse_una(U32 una);
+
+	void update_rto(I32 rtt);
+
+	void parse_ack(U32 sn);
+
+	int input(const char *data, long len);
 
 	void flush();
 
@@ -307,6 +313,11 @@ public:
 	U32 ikcp_getconv(const void *ptr);
 	
 };
+
+inline U32 _ibound_(U32 lower, U32 middle, U32 upper) 
+{
+	return min(max(lower, middle), upper);
+}
 
 // 将dw放在p位置返回p+4
 inline char *kcp_encode32u(char *p, U32 dw) {

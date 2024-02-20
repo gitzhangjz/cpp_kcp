@@ -5,8 +5,6 @@
 #include <algorithm>
 #include <cstring>
 
-using std::min, std::max;
-
 /*
 	CMD_ACK:
 		对报文的ack, 需要：ts, sn
@@ -116,8 +114,8 @@ void KCPCB::ack_get(int i, U32& sn, U32& ts) {
 
 
 int KCPCB::rcvwnd_unused() {
-	if(nrcv_que < rcv_wnd)
-		return rcv_wnd - nrcv_que;
+	if(rcv_queue.size() < rcv_wnd)
+		return rcv_wnd - rcv_queue.size();
 	return 0;
 }
 
@@ -350,3 +348,160 @@ void KCPCB::flush() {
 		incr = mss;
 	}
 }
+
+// 上层定时调用，发送缓冲区数据以及ACK等信息
+void KCPCB::update(U32 current) {
+
+	this->current = current;
+
+	if(updated == 0) {
+		updated = 1;
+		ts_flush = current;
+	}
+
+	// 当前时间是否到了刷新的时候
+	I32 slap = u32diff(current, ts_flush);
+
+	if(slap >= 10000 || slap < -10000) {
+		ts_flush = current;
+		slap = 0;
+	}
+
+	if(slap >= 0) {
+		ts_flush += interval;
+		if(u32diff(current, ts_flush) >= 0)
+			ts_flush = current + interval;
+		flush();
+	}
+}
+
+// 从snd_buf中删除小于una的包, 并将snd_una更新
+void KCPCB::parse_una(U32 una) {
+	while(!snd_buf.empty()) {
+		auto &q_front = snd_buf.front();
+		if(u32diff(q_front.sn , una) < 0)
+			snd_buf.pop_front();
+		else
+			break;
+	}
+
+	// 更新snd_una
+	if(!snd_buf.empty())
+		snd_una = snd_buf.front().sn;
+	else
+		snd_una = snd_nxt;
+}
+
+// 计算超时重传时间, 和计网自顶向下3.5.3节的公式一样
+void KCPCB::update_rto(I32 rtt) {
+	// rtt：该数据包的往返时间
+	// rx_srtt: 平滑的rtt,近8次rtt平均值
+	// rx_rttval: 近4次rtt和srtt的平均差值，反应了rtt偏离srtt的程度
+	// rx_rto: 重传超时时间
+
+	I32 rto = 0;
+	if(rx_srtt == 0) {
+		rx_srtt = rtt;
+		rx_rttval = rtt / 2;
+	} else {
+		long delta = rtt - rx_srtt;
+		if (delta < 0) delta = -delta;
+		rx_rttval = (3 * rx_rttval + delta) / 4;
+		rx_srtt = (7 * rx_srtt + rtt) / 8;
+		if (rx_srtt < 1) rx_srtt = 1;
+	}
+	rto = rx_srtt + max(interval, 4 * (U32)rx_rttval); // rx_srtt + 4*rx_rttval表示一种比较坏的情况
+	rx_rto = _ibound_(rx_minrto, rto, KCP_RTO_MAX);
+}
+
+// 把snd_buf里序号为sn的删掉, 对方已经收到了, 并将snd_una更新
+void KCPCB::parse_ack(U32 sn) {
+	if(u32diff(sn , snd_una) < 0 || u32diff(sn, snd_nxt) >= 0)
+		return;
+	
+	for(auto it = snd_buf.begin(); it != snd_buf.end(); ++it) {
+		if(it->sn == sn) {
+			snd_buf.erase(it);
+			break;
+		}
+		if(u32diff(sn, it->sn) < 0)
+			break;
+	}
+
+	// 更新snd_una
+	if(!snd_buf.empty())
+		snd_una = snd_buf.front().sn;
+	else
+		snd_una = snd_nxt;
+}
+
+
+// 从下层协议接收数据, data中可能好几个kcp包
+int KCPCB::input(const char *data, long sz) {
+	bool flag = false;
+	U32 maxack, latest_ts;
+	while(1) { // 循环读取报文
+		U32 ts, sn, len, una, conv;
+		U16 wnd;
+		U8 cmd, frg;
+
+		if(sz < (int)KCP_OVERHEAD) break;
+
+		data = kcp_decode32u(data, &conv);
+		if(conv != this->conv) return -1;
+
+		// 取得所有包头信息
+		data = kcp_decode8u(data, &cmd);
+		data = kcp_decode8u(data, &frg);
+		data = kcp_decode16u(data, &wnd);
+		data = kcp_decode32u(data, &ts);
+		data = kcp_decode32u(data, &sn);
+		data = kcp_decode32u(data, &una);
+		data = kcp_decode32u(data, &len);
+
+		sz -= (int)KCP_OVERHEAD;
+
+		if(sz < (long)len || (int)len < 0) return -2;
+
+		if(	cmd != KCP_CMD_PUSH && cmd != KCP_CMD_ACK &&
+			cmd != KCP_CMD_WASK && cmd != KCP_CMD_WINS)
+			return -3;
+
+		// wnd: 对方的接收窗口
+		rmt_wnd = wnd;
+		// una: 期待数据包, una之前的都收到了可以删除
+		parse_una(una);
+
+		if(cmd == KCP_CMD_ACK) {
+
+			// ts为该数据包发送时间, current为当前时间(收到该数据包的ack), 两者之差为rtt
+			if(u32diff(current, ts) >= 0) {
+				update_rto(current - ts);
+			}
+
+			/*	
+				parse_ack() 把snd_buf里序号为sn的删掉, 对方已经收到了
+				维护maxack, 小于maxack的一定没有收到ack,
+				已经收到ack的已经删除, ikcp_parse_fastack()不会遍历到
+			*/
+			parse_ack(sn);
+			
+			// 更新maxack和latest_ts
+			if(!flag) {
+				flag = true;
+				maxack = sn, latest_ts = ts;
+			} else if(u32diff(sn , maxack) > 0) {
+				#ifndef IKCP_FASTACK_CONSERVE
+					maxack = sn;
+					latest_ts = ts;
+				#else
+					if (u32diff(ts, latest_ts) > 0) {
+						maxack = sn;
+						latest_ts = ts;
+					}
+				#endif
+			}
+		}
+	}
+}	
+
