@@ -435,11 +435,75 @@ void KCPCB::parse_ack(U32 sn) {
 		snd_una = snd_nxt;
 }
 
+void KCPCB::ack_push(U32 sn, U32 ts) {
+	acklist.push_back(sn);
+	acklist.push_back(ts);
+}
+
+// 检查是否应该接收sn包, 接收后将rcv_buf中连续的包转移到rcv_queue供上层读取
+void KCPCB::parse_data(U32 sn){
+	bool repeat = false;
+
+	// 新数据包在接收窗口之外, 不接收
+	if(u32diff(sn, rcv_nxt+rcv_wnd) >=0 || u32diff(sn, rcv_nxt) < 0)
+		return;
+	
+	// 是否接受过该包
+	auto it = rcv_buf.begin();
+	++it; // 第一个位置暂放放这个包, 所以跳过第一个
+	for(; it != rcv_buf.end(); ++it) {
+		if(sn == it->sn) {
+			repeat = true;
+			break;
+		} else if(u32diff(it->sn, sn) > 0) {
+			break;
+		}
+	}
+
+	if(!repeat) {
+		rcv_buf.splice(it, rcv_buf, rcv_buf.begin());
+	}else{ // 这个包丢掉
+		rcv_buf.pop_front();
+	}
+
+	// 将收到的连续数据包从rcv_buf 转移到 rcv_queue 供上层应用读取
+	while(!rcv_buf.empty()) {
+		auto it = rcv_buf.begin();
+		if(it->sn == rcv_nxt && rcv_queue.size() < rcv_wnd) {//数据包连续 且 rcv_queue 不满
+			rcv_queue.splice(rcv_queue.end(), rcv_buf, it);
+			++rcv_nxt;
+		}else{
+			break;
+		}
+	}
+}
+
+
+// 计算快速重传的参数fastack(发送缓存里的包被跳过的总次数,冗余ACK)
+void KCPCB::parse_fastack(U32 maxack, U32 ts) {
+	if(u32diff(maxack, snd_una) < 0 || u32diff(maxack, snd_nxt) >= 0)
+		return;
+	
+	// 统计maxack之前的有几个没有被ack包
+	for(auto &seg: snd_buf) {
+		if(u32diff(maxack, seg.sn) < 0)
+			break;
+		if(maxack != seg.sn) {
+			#ifndef IKCP_FASTACK_CONSERVE
+				++seg.fastack; // 该数据包被跳过一次
+			#else
+				if (u32diff(ts, seg.ts) >= 0)
+					++seg.fastack;
+			#endif
+		}
+	}
+}
+
 
 // 从下层协议接收数据, data中可能好几个kcp包
 int KCPCB::input(const char *data, long sz) {
 	bool flag = false;
-	U32 maxack, latest_ts;
+	U32 maxack, latest_ts, prev_una = snd_una;
 	while(1) { // 循环读取报文
 		U32 ts, sn, len, una, conv;
 		U16 wnd;
@@ -501,7 +565,81 @@ int KCPCB::input(const char *data, long sz) {
 					}
 				#endif
 			}
+		} else if(cmd == KCP_CMD_WASK) {	// 发送方探测接收方的窗口大小
+			probe |= KCP_ASK_TELL;
+		} else if(cmd == KCP_CMD_WINS) {
+			// do nothing
+		} else if(cmd == KCP_CMD_PUSH) {
+			if(u32diff(sn, rcv_nxt+rcv_wnd) < 0) {// 判断是否超出(大于)接收窗口
+				ack_push(sn, ts);
+				if(u32diff(sn, rcv_nxt) >= 0) { // 判断是否超出(小于)接收窗口
+					// 先将数据放在第一个位置, 在parse_data里将其放在正确位置
+					rcv_buf.emplace_front();
+					auto &q_front = rcv_buf.front();
+
+					q_front.conv = conv;
+					q_front.cmd = cmd;
+					q_front.frg = frg;
+					q_front.wnd = wnd;
+					q_front.ts = ts;
+					q_front.sn = sn;
+					q_front.una = una;
+					q_front.len = len;
+
+					if(len > 0 && q_front.add_data(data, len) == len)
+						parse_data(sn);
+					else
+						rcv_buf.pop_front();
+				}
+			}
+		}else{
+			return -3;
+		}
+
+		data += len;
+		sz -= len;
+	}
+
+	if(flag) {
+		parse_fastack(maxack, latest_ts);
+	}
+
+	/*  
+		接收时，拥塞窗口增加
+		拥塞窗口控制, 慢启动：每收到一个ACK，拥塞窗口就加1，一个RTT拥塞窗口会翻倍增长。 
+		拥塞避免：每收到一个ACK，拥塞窗口就加1/cwnd, 一个RTT拥塞窗口加1
+		下边发送时，拥塞窗口减少
+	*/
+	if (u32diff(snd_una, prev_una) > 0) {
+		if (cwnd < rmt_wnd) {
+			U32 mss = mss;
+			// 拥塞窗口小于慢启动阈值，快速增加拥塞窗口
+			if (cwnd < ssthresh) { 
+				cwnd++; // 慢启动
+				incr += mss;
+				// 达到阈值的时候 cwnd*mss = incr
+			}	
+			// 拥塞窗口大于慢启动阈值，拥塞避免模式, 慢速增加拥塞窗口
+			else { 	
+				if (incr < mss) incr = mss;
+				// 经过计算，差不多是每个RTT增加一个mss, 间隔略小于一个RTT，也就是更快地增加拥塞窗口
+				// incr = k*mss , 拥塞窗口等于floor(k)
+				incr += (mss * mss) / incr + (mss / 16); 
+				if ((cwnd + 1) * mss <= incr) {
+				#if 1
+					cwnd = (incr + mss - 1) / ((mss > 0)? mss : 1);
+				#else
+					cwnd++;
+				#endif
+				}
+			}
+			if (cwnd > rmt_wnd) {
+				cwnd = rmt_wnd;
+				incr = rmt_wnd * mss;
+			}
 		}
 	}
+
+	return 0;
 }	
 

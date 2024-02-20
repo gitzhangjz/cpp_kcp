@@ -290,6 +290,12 @@ public:
 
 	void parse_ack(U32 sn);
 
+	void ack_push(U32 sn, U32 ts);
+
+	void parse_data(U32 sn);
+
+	void parse_fastack(U32 sn, U32 ts);
+
 	int input(const char *data, long len);
 
 	void flush();
