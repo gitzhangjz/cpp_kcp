@@ -2,11 +2,13 @@ KCP协议的C++版本
 
 完成测试5次，三个模式的平均rtt分别为:507ms、212ms、189ms：
 
-<div align=center><img src="[cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode0.png)"/> </div>
+[mode0]!([cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode0.png))
 
-<div align=center><img src="[cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode1.png)"/> </div>
+[mode1]!([cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode1.png))
 
-<div align=center><img src="[cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode2.png)"/> </div>
+[mode2]!([cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode2.png))
+
+
 
 与官方C语言版本主要区别：
 
