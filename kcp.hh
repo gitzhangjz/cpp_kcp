@@ -298,6 +298,10 @@ public:
 
 	int input(const char *data, long len);
 
+	int recv(char *buffer, int len);
+
+	int peeksize();
+
 	void flush();
 
 	int kcp_output(const char *buf, int len);

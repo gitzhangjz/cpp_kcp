@@ -643,3 +643,81 @@ int KCPCB::input(const char *data, long sz) {
 	return 0;
 }	
 
+// 上层用户接收长度len的数据到buffer
+int KCPCB::recv(char *buffer, int len) {
+	if(rcv_queue.empty()) return -1;
+	bool ispeek = (len < 0);
+	if(len < 0) len = -len;
+
+	int peeksz = peeksize();
+
+	if(peeksz < 0) return -2;
+
+	if(peeksz > len) return -3;
+
+	bool fast_recover = false;
+	if(rcv_queue.size() >= rcv_wnd) {
+		fast_recover = true;
+	}
+
+	auto it = rcv_queue.begin();
+	for(; it != rcv_queue.end(); ++it) {
+		auto &seg = *it;
+		if(buffer) {
+			memcpy(buffer, seg.data, seg.len);
+			buffer += seg.len;
+		}
+		len -= seg.len;
+
+		// 非字节流模式 ： 读到最后一段，已经组装出一个完整的上层数据包
+		// 字节流模式：每个包的frg都为0，每次recv只会读到一个包
+		// 也有可能遇不到fragment为0的包，消息的其他部分还在接收缓存或者网络中
+		if(seg.frg == 0) {
+			++it;
+			break;
+		}
+	}
+
+	if(ispeek == false) {
+		rcv_queue.erase(rcv_queue.begin(), it);
+	}
+	assert(len == 0);
+
+	// move available data from rcv_buf -> rcv_queue
+	// input里已经转移过一次了, 用户把数据读走后rcv_que变小了, 这里再转移一次
+	while(!rcv_buf.empty()) {
+		auto it = rcv_buf.begin();
+		if(it->sn == rcv_nxt && rcv_queue.size() < rcv_wnd) {
+			rcv_queue.splice(rcv_queue.end(), rcv_buf, it);
+			++rcv_nxt;
+		}else{
+			break;
+		}
+	}
+
+	// fast recover
+	if(fast_recover && rcv_queue.size() < rcv_wnd) {
+		// ready to send back IKCP_CMD_WINS
+		probe |= KCP_ASK_TELL;
+	}
+
+	return peeksz;
+}
+
+// 返回消息的大小（应用层的一个数据包大小, 如果分段, 则要计算所有段的和），如果是流模式，返回一个KCP包的大小
+int KCPCB::peeksize() {
+	if(rcv_queue.empty()) return -1;
+
+	auto &q_front = rcv_queue.front();
+	if(q_front.frg == 0) return q_front.len;
+
+	if(rcv_queue.size() < q_front.frg + 1) return -1;
+
+	int length = 0;
+	for(auto &seg: rcv_queue) {
+		length += seg.len;
+		if(seg.frg == 0) break;
+	}
+
+	return length;
+}
