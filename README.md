@@ -2,7 +2,7 @@ KCP协议的C++版本
 
 完成测试5次，三个模式的平均rtt分别为:507ms、212ms、189ms：
 
-[mode0]!([cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode0.png))
+![mode0]([cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode0.png))
 
 [mode1]!([cpp_kcp/img/mode0.png at main · gitzhangjz/cpp_kcp (github.com)](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode1.png))
 
