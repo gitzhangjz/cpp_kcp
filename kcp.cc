@@ -16,11 +16,6 @@ void KCPCB::log(const char *fmt, ...) {
 	printf("\n\n");
 }
 
-/*
-	CMD_ACK:
-		对报文的ack, 需要：ts, sn
-*/
-
 KCPSEG::KCPSEG(I32 data_sz) {
 	len = 0, capacity = data_sz, xmit = 0;
 	if(data_sz > 0)
