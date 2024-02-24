@@ -3,11 +3,14 @@
 ## 完成测试5次，三个模式的平均rtt分别为:507ms、212ms、189ms：
 
 ![image](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode0.png)
+
 ![image](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode1.png)
+
 ![image](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/mode2.png)
 
 ## KCP协议主要流程
 
+![image](https://github.com/gitzhangjz/cpp_kcp/blob/main/img/process.png)
 
 ## 与官方C语言版本主要区别：
 
