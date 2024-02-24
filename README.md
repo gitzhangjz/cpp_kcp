@@ -16,4 +16,4 @@
 
 1. 使用部分C++11特性；
 2. 面向对象实现；
-3. `KCPCB::snd_queue`、`KCPCB::rcv_queue`、`KCPCB::snd_buf`、`KCPCB::rcv_buf`，使用`std::list`实现，`KCPCB::acklist`使用`std::vector`实现。使用标准库的`list`和`vector`接口，代码更简洁，效率几乎没有差别（使用官方测试代码）；
+3. `KCPCB::snd_queue`、`KCPCB::rcv_queue`、`KCPCB::snd_buf`、`KCPCB::rcv_buf`，使用`std::list`实现，`KCPCB::acklist`使用`std::vector`实现。使用标准库的`list`和`vector`接口，代码更简洁（全部代码+注释只有不到1200行），效率几乎没有差别（使用官方测试代码）；
