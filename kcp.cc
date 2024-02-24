@@ -2,8 +2,19 @@
 #include <cstdlib>
 #include <malloc.h>
 #include <cassert>
+#include <stdio.h>
 #include <algorithm>
 #include <cstring>
+#include <stdarg.h>
+
+void KCPCB::log(const char *fmt, ...) {
+	printf("user %x \n", (void*)user);
+	va_list argptr;
+	va_start(argptr, fmt);
+	vprintf(fmt, argptr);
+	va_end(argptr);
+	printf("\n\n");
+}
 
 /*
 	CMD_ACK:
@@ -68,7 +79,7 @@ KCPCB::KCPCB(U32 conv, void *user)
 	// nsnd_que = 0;
 	state = 0;
 	ackblock = 0;
-	ackcount = 0;
+	// ackcount = 0;
 	rx_srtt = 0;
 	rx_rttval = 0;
 	rx_rto = KCP_RTO_DEF;
@@ -93,6 +104,41 @@ KCPCB::~KCPCB() {
 	delete []buffer;
 }
 
+int KCPCB::set_wndsize(int sndwnd, int rcvwnd) {
+	if(sndwnd > 0) {
+		snd_wnd = sndwnd;
+	}
+	if(rcvwnd > 0) {
+		rcv_wnd = max((U32)rcvwnd, KCP_WND_RCV);
+	}
+	return 0;
+
+}
+
+int KCPCB::nodelay(int nodelay, int interval, int resend, int nc) {
+	if(nodelay >= 0) {
+		nodelay_flag = nodelay;
+		if(nodelay) {
+			rx_minrto = KCP_RTO_NDL;
+		} else {
+			rx_minrto = KCP_RTO_MIN;
+		}
+	}
+	if(interval >= 0) {
+		if(interval > 5000) interval = 5000;
+		else if(interval < 10) interval = 10;
+		this->interval = interval;
+	}
+	if(resend >= 0) {
+		fastresend = resend;
+	}
+	if(nc >= 0) {
+		nocwnd = nc;
+	}
+	return 0;
+}
+
+
 void KCPCB::set_output(int (*output)(const char *buf, int len,
 	const KCPCB& kcp, void *user)) 
 {
@@ -101,8 +147,8 @@ void KCPCB::set_output(int (*output)(const char *buf, int len,
 
 int KCPCB::kcp_output(const char *buf, int len) {
 	assert(output);
-
 	if(len == 0) return 0;
+	
 	return output(buf, len, *this, user);
 }
 
@@ -143,11 +189,11 @@ int KCPCB::send(const char *buffer, int len)
 	if(count == 0) count = 1; // 空包(len = 0)的情况
 
 	if(count >= (int)KCP_WND_RCV) return -2;
-
 	for(int i = 0; i < count; ++i) {
 		snd_queue.emplace_back();
 		auto &q_back = snd_queue.back();
 		int extend = q_back.add_data(buffer, len);
+		q_back.frg = (stream == 0) ? (count - i - 1) : 0;
 		if(buffer) {
 			buffer += extend;
 		}
@@ -159,6 +205,7 @@ int KCPCB::send(const char *buffer, int len)
 
 // 发送数据及ACK等信息
 void KCPCB::flush() {
+	
 	if(updated == 0) return;
 
 	char *ptr = buffer;
@@ -174,7 +221,7 @@ void KCPCB::flush() {
 		}
 	};
 
-	U32 current = current;
+	// U32 current = current;
 
 	KCPSEG seg(0);
 
@@ -187,14 +234,14 @@ void KCPCB::flush() {
 
 	// Step1. 收到报文, 回复ack, 没有报文, 只发包头
 	// 包头需要: CMD_ACK, ts, sn
-	int count = ackcount, i;
-
+	int count = acklist.size()/2, i;
 	for(i = 0; i < count; ++i) {
 		try_put_buffer((int)KCP_OVERHEAD);
 		ack_get(i, seg.sn, seg.ts);
 		ptr = kcp_encode_seg(ptr, seg);
 	}
-	ackcount = 0;
+	acklist.clear();
+	// ackcount = 0;
 
 	// Step2. 检测对面窗口, 发现对面窗口满了, 探测窗口, 没有报文, 只发包头
 	// 包头需要: IKCP_CMD_WASK
@@ -241,7 +288,7 @@ void KCPCB::flush() {
 		wnd = min(wnd, cwnd);
 	
 	while(u32diff(snd_nxt, snd_una + wnd) < 0 && !snd_queue.empty()) {
-		// 将snd_queue队尾放在snd_buf队头
+		// 将snd_queue队头放在snd_buf队尾
 		snd_buf.splice(snd_buf.end(), snd_queue, snd_queue.begin());
 		auto &q_back = snd_buf.back();
 
@@ -300,7 +347,6 @@ void KCPCB::flush() {
 				change = true;
 			}
 		}
-
 		if(needsend) {
 			snd_seg.ts = current;
 			snd_seg.wnd = seg.wnd;
@@ -309,11 +355,11 @@ void KCPCB::flush() {
 			int input_sz = KCP_OVERHEAD + snd_seg.len;
 			try_put_buffer(input_sz);
 
+			ptr = kcp_encode_seg(ptr, snd_seg);
 			if(snd_seg.len > 0) {
 				memcpy(ptr, snd_seg.data, snd_seg.len);
 				ptr += snd_seg.len;
 			}
-
 			// 这里用数据包的重传次数
 			if(snd_seg.xmit >= dead_link)
 				state = (U32)-1;
@@ -351,7 +397,6 @@ void KCPCB::flush() {
 
 // 上层定时调用，发送缓冲区数据以及ACK等信息
 void KCPCB::update(U32 current) {
-
 	this->current = current;
 
 	if(updated == 0) {
@@ -445,8 +490,10 @@ void KCPCB::parse_data(U32 sn){
 	bool repeat = false;
 
 	// 新数据包在接收窗口之外, 不接收
-	if(u32diff(sn, rcv_nxt+rcv_wnd) >=0 || u32diff(sn, rcv_nxt) < 0)
+	if(u32diff(sn, rcv_nxt+rcv_wnd) >=0 || u32diff(sn, rcv_nxt) < 0) {
+		rcv_buf.pop_front();
 		return;
+	}
 	
 	// 是否接受过该包
 	auto it = rcv_buf.begin();
@@ -460,7 +507,7 @@ void KCPCB::parse_data(U32 sn){
 		}
 	}
 
-	if(!repeat) {
+	if(!repeat) { // 把队头的这个包放到it之前
 		rcv_buf.splice(it, rcv_buf, rcv_buf.begin());
 	}else{ // 这个包丢掉
 		rcv_buf.pop_front();
@@ -504,6 +551,7 @@ void KCPCB::parse_fastack(U32 maxack, U32 ts) {
 int KCPCB::input(const char *data, long sz) {
 	bool flag = false;
 	U32 maxack, latest_ts, prev_una = snd_una;
+
 	while(1) { // 循环读取报文
 		U32 ts, sn, len, una, conv;
 		U16 wnd;
@@ -524,13 +572,11 @@ int KCPCB::input(const char *data, long sz) {
 		data = kcp_decode32u(data, &len);
 
 		sz -= (int)KCP_OVERHEAD;
-
 		if(sz < (long)len || (int)len < 0) return -2;
 
 		if(	cmd != KCP_CMD_PUSH && cmd != KCP_CMD_ACK &&
 			cmd != KCP_CMD_WASK && cmd != KCP_CMD_WINS)
 			return -3;
-
 		// wnd: 对方的接收窗口
 		rmt_wnd = wnd;
 		// una: 期待数据包, una之前的都收到了可以删除
@@ -565,9 +611,12 @@ int KCPCB::input(const char *data, long sz) {
 					}
 				#endif
 			}
+			// log("recv ack: %lu\n", sn);
 		} else if(cmd == KCP_CMD_WASK) {	// 发送方探测接收方的窗口大小
+			log("input probe\n");
 			probe |= KCP_ASK_TELL;
 		} else if(cmd == KCP_CMD_WINS) {
+			log("input wins: %lu\n", wnd);
 			// do nothing
 		} else if(cmd == KCP_CMD_PUSH) {
 			if(u32diff(sn, rcv_nxt+rcv_wnd) < 0) {// 判断是否超出(大于)接收窗口
@@ -584,12 +633,10 @@ int KCPCB::input(const char *data, long sz) {
 					q_front.ts = ts;
 					q_front.sn = sn;
 					q_front.una = una;
-					q_front.len = len;
-
-					if(len > 0 && q_front.add_data(data, len) == len)
-						parse_data(sn);
-					else
-						rcv_buf.pop_front();
+					if(len > 0)
+						q_front.add_data(data, len);
+					parse_data(sn);
+					// rcv_buf.pop_front();
 				}
 			}
 		}else{
@@ -650,7 +697,6 @@ int KCPCB::recv(char *buffer, int len) {
 	if(len < 0) len = -len;
 
 	int peeksz = peeksize();
-
 	if(peeksz < 0) return -2;
 
 	if(peeksz > len) return -3;
@@ -661,13 +707,16 @@ int KCPCB::recv(char *buffer, int len) {
 	}
 
 	auto it = rcv_queue.begin();
+	len = 0;
 	for(; it != rcv_queue.end(); ++it) {
+
 		auto &seg = *it;
 		if(buffer) {
 			memcpy(buffer, seg.data, seg.len);
 			buffer += seg.len;
 		}
-		len -= seg.len;
+		
+		len += seg.len;
 
 		// 非字节流模式 ： 读到最后一段，已经组装出一个完整的上层数据包
 		// 字节流模式：每个包的frg都为0，每次recv只会读到一个包
@@ -681,7 +730,7 @@ int KCPCB::recv(char *buffer, int len) {
 	if(ispeek == false) {
 		rcv_queue.erase(rcv_queue.begin(), it);
 	}
-	assert(len == 0);
+	assert(len == peeksz);
 
 	// move available data from rcv_buf -> rcv_queue
 	// input里已经转移过一次了, 用户把数据读走后rcv_que变小了, 这里再转移一次
@@ -694,7 +743,7 @@ int KCPCB::recv(char *buffer, int len) {
 			break;
 		}
 	}
-
+	
 	// fast recover
 	if(fast_recover && rcv_queue.size() < rcv_wnd) {
 		// ready to send back IKCP_CMD_WINS
@@ -707,8 +756,8 @@ int KCPCB::recv(char *buffer, int len) {
 // 返回消息的大小（应用层的一个数据包大小, 如果分段, 则要计算所有段的和），如果是流模式，返回一个KCP包的大小
 int KCPCB::peeksize() {
 	if(rcv_queue.empty()) return -1;
-
 	auto &q_front = rcv_queue.front();
+
 	if(q_front.frg == 0) return q_front.len;
 
 	if(rcv_queue.size() < q_front.frg + 1) return -1;

@@ -3,6 +3,7 @@
 
 #include <list>
 #include <vector>
+#include <cstring>
 
 using std::list, std::vector, std::min, std::max;
 
@@ -163,7 +164,7 @@ constexpr U32 KCP_FASTACK_LIMIT = 5;		// max times to trigger fastack
 
 
 class KCPSEG {
-	KCPSEG& operator=(KCPSEG&) {} 
+	KCPSEG& operator=(KCPSEG&) {return *this;} 
 	KCPSEG(const KCPSEG&) {}
 public:
 	I32 conv;	// 会话ID
@@ -208,7 +209,7 @@ public:
 };
 
 class KCPCB {
-	KCPCB& operator=(const KCPCB&) {}
+	KCPCB& operator=(const KCPCB&) {return *this;}
 public:
 	U32 conv; 		// 会话ID
 	U32 mtu; 		// 下层协议的最大传输单元, 一次发送若干个kcp包, 这些包的总长度不超过mtu
@@ -255,7 +256,7 @@ public:
 	list<KCPSEG> snd_buf; // 一个node指针, 循环链表里的某个节点
 	list<KCPSEG> rcv_buf; // 接收缓存, 将收到的数据暂存, 然后将其中连续的数据放到rcv_queue供上层读取
 	vector<U32> acklist; // 一个整数数组，存放要回答的ack，结构为 [sn0, ts0, sn1, ts1, ...]
-	U32 ackcount; // 本次需要回复的ack个数
+	// U32 ackcount; // 本次需要回复的ack个数
 	U32 ackblock;
 	void *user;
 	char *buffer; // 发送数据的缓冲区
@@ -282,7 +283,7 @@ public:
 
 	void update(U32 current);
 
-	U32 check(U32 current);
+	// U32 check(U32 current);
 
 	void parse_una(U32 una);
 
@@ -298,29 +299,27 @@ public:
 
 	int input(const char *data, long len);
 
-	int recv(char *buffer, int len);
-
-	int peeksize();
-
 	void flush();
 
 	int kcp_output(const char *buf, int len);
 
 	int peeksize();
 
-	int setmtu(int mtu);
+	// int setmtu(int mtu);
 
 	int rcvwnd_unused();
 	
 	int set_wndsize(int sndwnd, int rcvwnd);
 
-	int waitsnd();
+	// int waitsnd();
 
 	int nodelay(int nodelay, int interval, int resend, int nc);
 
-	void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
+	void log(const char *fmt, ...);
 
-	U32 ikcp_getconv(const void *ptr);
+	// void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
+
+	// U32 ikcp_getconv(const void *ptr);
 	
 };
 
