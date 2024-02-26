@@ -3,7 +3,7 @@
 // test.cpp - kcp 测试用例
 //
 // 说明：
-// gcc test.cpp -o test -lstdc++
+// g++ test.cc kcp.cc -o test -lstdc++
 //
 //=====================================================================
 

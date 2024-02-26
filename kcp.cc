@@ -1,6 +1,6 @@
 #include "kcp.hh"
 #include <cstdlib>
-#include <malloc.h>
+// #include <malloc.h>
 #include <cassert>
 #include <stdio.h>
 #include <algorithm>

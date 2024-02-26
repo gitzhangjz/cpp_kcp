@@ -346,10 +346,10 @@ inline char *kcp_encode32u(char *p, U32 dw) {
 inline const char *kcp_decode32u(const char *p, U32 *dw)
 {
 #if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-	*l = *(const unsigned char*)(p + 3);
-	*l = *(const unsigned char*)(p + 2) + (*dw << 8);
-	*l = *(const unsigned char*)(p + 1) + (*dw << 8);
-	*l = *(const unsigned char*)(p + 0) + (*dw << 8);
+	*dw = *(const unsigned char*)(p + 3);
+	*dw = *(const unsigned char*)(p + 2) + (*dw << 8);
+	*dw = *(const unsigned char*)(p + 1) + (*dw << 8);
+	*dw = *(const unsigned char*)(p + 0) + (*dw << 8);
 #else 
 	memcpy(dw, p, 4);
 #endif
