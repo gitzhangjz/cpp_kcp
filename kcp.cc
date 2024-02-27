@@ -7,6 +7,10 @@
 #include <cstring>
 #include <stdarg.h>
 
+/*
+    基本rto计算在 KCPCB::update_rto() 里, 超时的rto计算在 KCPCB::flush() 里
+*/
+
 void KCPCB::log(const char *fmt, ...) {
 	printf("user %x \n", (void*)user);
 	va_list argptr;
